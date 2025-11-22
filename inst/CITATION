@@ -1,0 +1,18 @@
+citHeader("To cite EpiPvr in publications, please use:")
+
+bibentry(
+  bibtype = "Article",  # <- this is essential
+  title = "Plant pathogen profiling with the EpiPv package",
+  author = c(
+    person("Ruairi", "Donnelly"),
+    person("Israel", "Tankam"),
+    person("Chris", "Gilligan")
+  ),
+  year = "2025",
+  journal = "EcoEvoRxiv",
+  url = "https://ecoevorxiv.org/repository/view/9081/",
+  textVersion = paste(
+    "Donnelly et al. (2025). Plant pathogen profiling with the EpiPv package.",
+    "EcoEvoRxiv. Available at: https://ecoevorxiv.org/repository/view/9081/"
+  )
+)

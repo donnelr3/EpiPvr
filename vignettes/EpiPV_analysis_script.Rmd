@@ -1,0 +1,500 @@
+
+---
+title: "Using the EpiPvr package to analyse access period data"
+author: "R. Donnelly"
+date: "2025-09-24"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Using the EpiPvr package to analyse access period data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+library(EpiPvr)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  comment = "#>",
+  tidy = FALSE,
+  width = 70
+)
+set.seed(123)  # ensure reproducibility for CRAN checks
+```
+
+## R Markdown
+
+**This vignette illustrates the analysis of access period datasets with the EpiPvr package.** First for semi-persistently transmitted viruses and then for persistently transmitted viruses we use simulated AP datasets to demonstrate virus parameter estimation. This process leads to posterior distributions for viral parameters.
+
+In the EpiPvr package we also include a function for calculating the probability of a local epidemic for a single introduced inoculum. This function requires virus parameters and local parameters. We show how to take samples from the posterior distributions for the virus parameters (as outlined above) and to use them to calculate epidemic probability in local conditions.
+
+In practice, results from these stochastic functions will vary between runs because of random sampling. We fix a seed (`set.seed(123)`) at the start of this vignette to ensure reproducibility for CRAN checks.
+
+
+```{r, include=FALSE}
+print("Now running: Chunk 1 setups...")
+flush.console()
+```
+
+
+```{r presets, cache=FALSE}
+
+virus_type='SPT' 
+lsEst_in=40; # upper bound on per insect survival in the experiment in days
+
+```
+
+
+Loading the example dataset for an SPT virus. See package documentation entry for the ap_data_sim_SPT dataset for explanation of the dataset columns which correspond to AP experiment structure.
+
+```{r dataset, cache=FALSE}
+
+data("ap_data_sim_SPT", package = "EpiPvr")
+print(ap_data_sim_SPT)
+
+```
+
+**We now run the estimate_virus_parameters_SPT function for viral parameter estimation** from the SPT virus dataset. Note: For runtime reasons, CRAN runs a precomputed fit. To rerun the full analysis, set Sys.setenv(NOT_CRAN = "true") before rebuilding the vignette.
+
+```{r sample, cache=FALSE, message=FALSE, warning=FALSE}
+if (identical(Sys.getenv("NOT_CRAN"), "true")) {
+EVSPT_sim=estimate_virus_parameters_SPT(ap_data_sim_SPT,lsEst_in,D_numPtsPdin=1,
+                                        mcmcOptions=c(4500,6000),numChainsIn=4,mc.parallel=0)
+} else {
+  # Load precomputed object for CRAN
+  EVSPT_sim <- readRDS(system.file("extdata", "EVSPT_sim.rds", package = "EpiPvr"))
+}
+
+target=EVSPT_sim$array1 # fixing the first output array, contains the sample Markov chains
+
+```
+
+First of all, note the important message printed off by default to users of the estimate_virus_parameters_SPT and estimate_virus_parameters_PT functions. It is important that users recognise that they must evaluate the model fit as satisfactory before moving forward with and/or reporting parameter estimates. 
+
+In the above, the MCMC sampler sends updates to the console (e.g. chain iteration progress). Warnings relating to the initial value are not a problem - provided that the chain settles down to smoothing successfully. 
+
+
+Printing the dimensions and first parts of each of the seven output objects from estimate_virus_parameters_SPT: 
+
+```{r print, cache=FALSE}
+
+# viewing output content
+print(dim(EVSPT_sim$array0))
+print(head(EVSPT_sim$array0))
+print(dim(EVSPT_sim$array1))
+print(head(EVSPT_sim$array1))
+print(dim(EVSPT_sim$array2))
+print(head(EVSPT_sim$array2))
+print(length(EVSPT_sim$array3))
+print(head(EVSPT_sim$array3))
+print(length(EVSPT_sim$array4))
+print(head(EVSPT_sim$array4))
+print(length(EVSPT_sim$array5))
+print(head(EVSPT_sim$array5))
+print(length(EVSPT_sim$converge_results))
+print(head(EVSPT_sim$converge_results))
+
+runs=dim(target)[1]
+nChains=dim(target)[2]
+
+```
+
+**estimate_virus_parameters_SPT function output and model fit**
+
+The above 7 objects that are returned from the estimate_virus_parameters_SPT function are briefly as follows: array 0 and array 1 are the samples for estimated parameters. Array 0 includes the 3 fitted parameters of the model which are composite parameters and insect mortality as well as lp; array 1 is simply the viral parameters that we are chiefly interested in here (they are derived from the composite parameters). Array 2 contains summary statistics for a range of parameters. It is returned primarily for model diagnostics purposes: the columns rhat and ess_bullk can be checked if needed. Array 3 and array 4 contain forward simulation of the access period data (array 3 is the acquisition varying sub-assay, array 4 is the inoculation varying sub-assay). Array 5 contains Bayesian R2 values which users may wish to consult as measures of model fit (the first and second elements correspond to the acquisition and inoculation varying sub-assays respectively). Finally, converge_results provides values that confirm model convergence (there must be no divergent transitions, and no max tree depth exceeded instances). 
+
+
+NOTE that these are returned to provide flexibility for users to examine model fit - but the absence of warnings that are printed to the console is itself indicative of model convergence. The warnings themselves can be checked with the warnings() command. Again this is not really necessary as rstan convergence warnings will print to console, but rechecking of warnings is here demonstrated for convenience.
+
+An important diagnostic step in Bayesian model fitting is inspecting pairs plots, which are particularly useful for visualising issues such as divergent transitions and correlations - these complement the explicit warnings of the stan sampler however which are the main port of call. These plots display relationships between model parameters and also include lp__, the log-posterior of the model, in addition bD represents the rate of insect mortality in the laboratory,# modelled here as a form of nuisance parameter (can theoretically influence the duration of the final IAP phase in assays - but not generally a focal model component). bD is assigned a uniform prior bounded by the minimum possible survival time (0.1h) and the maximum insect survival under natural conditions, as specified by the user (in days). Given this broad prior and the typically fixed durations of experiments, the posterior distribution of bD is expected to remain largely uninformative.
+
+```{r SPTprintw, cache=FALSE}
+if (length(warnings()) > 0) {
+  print("Warnings occurred during fitting; check convergence diagnostics.")
+}
+```
+
+
+
+We use mcmc_pairs from the bayesplot package to perform pair plots of parameters. Not displaying here to reduce runtime/size but can be run by user to visualise the output.
+
+```{r plotSPT, fig.width=5, fig.height=5, echo=FALSE}
+
+#bayesplot::mcmc_pairs(EVSPT_sim$array0,diag_fun = "dens")
+
+
+```
+
+Since we are satisfied with the model fits we proceed with the viral parameter estimates, which we now display alone as density plots. Not displaying here to reduce runtime/size but can be run by user to visualise the output.
+
+```{r plotSPT2, fig.width=5, fig.height=5, echo=FALSE}
+
+#bayesplot::mcmc_dens(EVSPT_sim$array1,facet_args = list(ncol = 3))+ ggplot2::theme(aspect.ratio = 0.5)
+
+```
+
+
+
+We can also plot that part of the function output concerning forward predictions of the assay data (based upon the parameter estimates). One can plot the original assay data (also included in the output) as well as the 95% credible interval. Plots confirm that the 95% credible interval is very good fit for the data.
+
+
+```{r plotSPT3, echo=FALSE}
+
+plot(EVSPT_sim$array3$lenA,EVSPT_sim$array3$propA, xlab = "AAP duration, hours", ylab = "Prop. test plants SPT infected",ylim=c(0,1))
+lines(EVSPT_sim$array3$lenA,EVSPT_sim$array3$simulLA)
+lines(EVSPT_sim$array3$lenA,EVSPT_sim$array3$simulUA)
+legend(EVSPT_sim$array3$lenA[1], 0.5, legend=c("experiment", "95% Cr.I. estimates"), pch = c(1, NA), lty = c(NA, 1), col = "black", cex=0.8, bty = "n")
+plot(EVSPT_sim$array4$lenI,EVSPT_sim$array4$propI, xlab = "IAP duration, hours", ylab = "Prop. test plants SPT #infected",ylim=c(0,1))
+lines(EVSPT_sim$array4$lenI,EVSPT_sim$array4$simulLI)
+lines(EVSPT_sim$array4$lenI,EVSPT_sim$array4$simulUI)
+legend(EVSPT_sim$array4$lenI[1], 0.5, legend=c("experiment", "95% Cr.I. estimates"), pch = c(1, NA), lty = c(NA, 1), col = "black", cex=0.8, bty = "n")
+
+
+```
+
+
+
+
+**We now extract the parameter estimates for use in the calculation of local epidemic probability.** The posterior distributions now have the form of matrices within a 3D array, third dimension is the parameter (dimensions: iterations x no. Markov-chains). We also prepare the local parameters.
+
+
+```{r unpack, cache=FALSE}
+
+# P EPIDEMIC inferences
+# accessing the chains from estimate_virus_parameters
+# VIRUS PARAMETERS
+
+# convert from per hours to per day
+al_fits=target[,,dimnames(target)$variable=="al[1]", drop = TRUE]*24
+be_fits=target[,,dimnames(target)$variable=="be[1]", drop = TRUE]*24
+mu_fits=target[,,dimnames(target)$variable=="mu[1]", drop = TRUE]*24
+
+#confirm there are no negative values
+print(sum((al_fits<0)))
+print(sum((be_fits<0)))
+print(sum((mu_fits<0)))
+
+# LOCAL PARAMETERS
+# set the local parameters rates (per day)
+thet_external <- 0.45 # dispersal
+r_external  <- 1/28 # roguing
+bf_external <- 1/14  # vector mortality
+h_external <- 1/365  # harvesting rate
+nu_pl_external <- 1/14  # plant latent progression rate (1/plant latent period)
+localParams=c(thet_external, r_external, h_external, bf_external, nu_pl_external)
+# generate p Epdemic results for given insect burden (per plant)
+numInsects=3
+```
+
+Typically if one wishes to convert the virus parameter estimates into epidemic probability estimates one would use all of the posterior samples. *In this vignette for simplicity however we only look at the last 10 posterior samples (runsPrag=10)*. Users alternatively may already have a set of virus parameter values they wish to calculate epidemic probability from - in which case they would typically just run the function for a single parameter set.
+
+```{r infer, cache=FALSE}
+
+runsPrag=10 
+
+# initial guess for expected time in hours until next event - the function will use this 
+# to work out efficient time step (optional, default = 0.1)
+interval_ind=1/10 #
+
+# initialising vectors for storing chain samples
+result_vec_byPl <- array(rep(0, runsPrag*nChains), dim=c(runsPrag,nChains))
+result_vec_byIns <- result_vec_byPl
+
+
+if (identical(Sys.getenv("NOT_CRAN"), "true")) {
+
+# loop through MCMC chains to sample posterior distributions of virus parameters and 
+# calculate epidemic probability for a given vector abundance
+for (ggg in 1:nChains){
+  print(paste0('nChains',ggg))
+  for (ppp in 1:runsPrag) {
+    al_estim=al_fits[nrow(al_fits)+1-ppp,ggg]
+    be_estim=be_fits[nrow(al_fits)+1-ppp,ggg]
+    mu_estim=mu_fits[nrow(al_fits)+1-ppp,ggg]
+    virusParams=c(al_estim,be_estim,mu_estim)
+    # returns vector of epidemic probabilities for different inoculum states (see ms)
+    numVars <- ((numInsects+1)*3)-1  # insects per plant number no. inoculum states
+    qm_out=calculate_epidemic_probability(numInsects,interval_ind,localParams,virusParams)
+    result_vec_byPl[ppp,ggg]=qm_out[1]  # storing epi prob for state: inoculum=single infected plant
+    result_vec_byIns[ppp,ggg]=qm_out[(numVars-(numInsects-1))]  # storing for state: single infected insect
+    
+  }
+}
+
+} else {
+  # Load precomputed object for CRAN
+  result_vec_byPl <- readRDS(system.file("extdata", "result_vec_byPl.rds", package = "EpiPvr"))
+  result_vec_byIns <- readRDS(system.file("extdata", "result_vec_byIns.rds", package = "EpiPvr"))
+}
+
+
+```
+
+
+The output data is itself a posterior distribution - *though in this vignette we have only looked at a small number of samples from the virus parameters posterior distributions so results generated should be seen as illustrative only*. We can now use as_draws and summarize_draws from the posterior package to extract median values and credible intervals for the epidemic probabilities.
+
+
+
+```{r distributions, cache=FALSE}
+
+# data wrangling the set of epidemic probabilities from the chains
+data_table_Pl=array(rep(0,3), dim=c(3, 1))
+data_table_Ins=array(rep(0,3), dim=c(3, 1))
+target_A1A2=array(rep(0,2*runsPrag*nChains), dim=c(2,runsPrag*nChains))
+
+# for a given level of insect use 'summarise_draws' to calculate credible intervals
+target_A1=array(rep(0,runsPrag*nChains), dim=c(runsPrag, nChains))
+target_A2=target_A1
+for (gg in 1:nChains){
+  target_A1[,gg]=t(result_vec_byPl[,gg])
+  target_A2[,gg]=t(result_vec_byIns[,gg])
+}
+target_A1A2=rbind(as.vector(target_A1),as.vector(target_A2))
+
+# first the first few elements of epidemic probability from plant inocula
+print(head(target_A1A2))
+# and from insect inocula
+print(head(target_A1A2))
+
+```
+
+
+
+
+
+Printing median values and and credible intervals for the epidemic probabilities. This is conditioned on a local environment with numInsects=3 insect vectors per host plant, and on the earlier defined local rates.
+
+
+```{r tables1, cache=FALSE}
+
+
+# ensure at least ~20 data points for each of 4 chains (ie cant summarise distribution if v small)
+ts=posterior::summarize_draws(posterior::as_draws(t(target_A1A2))) 
+data_table_Pl=c(ts[1,]$median,ts[1,]$q5,ts[1,]$q95)
+data_table_Ins=c(ts[2,]$median,ts[2,]$q5,ts[2,]$q95)
+```
+
+
+And then printing the summary statistics of local epidemic probability (median and default 90% credible interval from summarize_draws() here for simplicity). Adjust code for e.g. 95% intervals as needed.
+
+```{r tables2, cache=FALSE}
+names(data_table_Pl)=c('50','5','95')
+print(data_table_Pl)
+
+names(data_table_Ins)=c('50','5','95')
+print(data_table_Ins)
+
+```
+
+
+
+
+
+**Repeating the entire process for a PT virus dataset.**
+
+
+
+Loading the example dataset for a PT virus. See package documentation entry for the ap_data_sim_PT dataset for explanation of the dataset columns which correspond to AP experiment structure.
+
+```{r PTpreandfit, cache=FALSE}
+
+virus_type='PT'
+data("ap_data_sim_PT", package = "EpiPvr")
+print(ap_data_sim_PT)
+
+```
+
+Note: for runtime reasons, CRAN runs a precomputed fit. To rerun the full analysis, set Sys.setenv(NOT_CRAN = "true") before rebuilding the vignette.
+
+```{r PTsample, cache=TRUE}
+if (identical(Sys.getenv("NOT_CRAN"), "true")) {
+EVPT_sim=estimate_virus_parameters_PT(ap_data_sim_PT,lsEst_in,D_numPtsPdin=1,mcmcOptions=c(1000,2000),numChainsIn=4,mc.parallel=0)
+} else {
+  # Load precomputed object for CRAN
+  EVPT_sim <- readRDS(system.file("extdata", "EVPT_sim.rds", package = "EpiPvr"))
+}
+
+target=EVPT_sim$array1
+
+runs=dim(target)[1]
+nChains=dim(target)[2]
+
+```
+
+Taking a quick look at estimate_virus_parameters_PT's output: 
+
+```{r PTprint, cache=FALSE}
+
+print(dim(EVPT_sim$array0))
+print(head(EVPT_sim$array0))
+print(dim(EVPT_sim$array1))
+print(head(EVPT_sim$array1))
+print(dim(EVPT_sim$array2))
+print(head(EVPT_sim$array2))
+print(length(EVPT_sim$array3))
+print(head(EVPT_sim$array3))
+print(length(EVPT_sim$array4))
+print(head(EVPT_sim$array4))
+print(length(EVPT_sim$array5))
+print(head(EVPT_sim$array5))
+print(length(EVPT_sim$array6))
+print(head(EVPT_sim$array6))
+print(length(EVPT_sim$converge_results))
+print(head(EVPT_sim$converge_results))
+
+```
+
+And indeed seeing if there were any warnings - NB may not be essential persé - as rstan convergence warnings will print to console - rechecking of warnings, however, demonstrated here for reference are crucial and users must make sure that they have assessed convergence diagnostics and model fit.
+
+```{r PTprintw, cache=FALSE}
+if (length(warnings()) > 0) {
+  print("Warnings occurred during fitting; check convergence diagnostics.")
+}
+```
+
+
+Displaying pairs plots for the parameter estimates of a PT virus dataset.  Not displaying here to reduce runtime/size but can be run by user to visualise the output.
+
+```{r PTplot, fig.width=5, fig.height=5, echo=FALSE}
+
+# bayesplot::mcmc_pairs(EVPT_sim$array0,diag_fun = "dens")
+
+```
+
+Since we are satisfied with the model fits we proceed with the viral parameter estimates, which we now display alone as density plots. Not displaying here to reduce runtime/size but can be run by user to visualise the output.
+
+```{r PTplot1, fig.width=5, fig.height=5, echo=FALSE}
+
+#bayesplot::mcmc_dens(EVPT_sim$array1,facet_args = list(ncol = 4))+ ggplot2::theme(aspect.ratio = 0.5)
+
+```
+
+
+Plotting forward simulated assay data based on the parameter estimates against the original assay data.
+
+```{r PTplot2, echo=FALSE}
+
+plot(EVPT_sim$array3$lenA,EVPT_sim$array3$propA, xlab = "AAP duration, hours", ylab = "Prop. test plants PT infected",ylim=c(0,1))
+lines(EVPT_sim$array3$lenA,EVPT_sim$array3$simulLA)
+lines(EVPT_sim$array3$lenA,EVPT_sim$array3$simulUA)
+legend(EVPT_sim$array3$lenA[1], 0.5, legend=c("experiment", "95% Cr.I. estimates"), pch = c(1, NA), lty = c(NA, 1), col = "black", cex=0.8, bty = "n")
+plot(EVPT_sim$array4$lenL,EVPT_sim$array4$propL, xlab = "LAP duration, hours", ylab = "Prop. test plants PT #infected",ylim=c(0,1))
+lines(EVPT_sim$array4$lenL,EVPT_sim$array4$simulLL)
+lines(EVPT_sim$array4$lenL,EVPT_sim$array4$simulUL)
+legend(EVPT_sim$array4$lenL[1], 0.5, legend=c("experiment", "95% Cr.I. estimates"), pch = c(1, NA), lty = c(NA, 1), col = "black", cex=0.8, bty = "n")
+plot(EVPT_sim$array5$lenI,EVPT_sim$array5$propI, xlab = "IAP duration, hours", ylab = "Prop. test plants PT #infected",ylim=c(0,1))
+lines(EVPT_sim$array5$lenI,EVPT_sim$array5$simulLI)
+lines(EVPT_sim$array5$lenI,EVPT_sim$array5$simulUI)
+legend(EVPT_sim$array5$lenI[1], 0.5, legend=c("experiment", "95% Cr.I. estimates"), pch = c(1, NA), lty = c(NA, 1), col = "black", cex=0.8, bty = "n")
+
+```
+
+
+
+Extracting the Markov chain samples for the estimate virus parameters, and calcuating epidemic probability based on a small number of samples (*for illustration only).
+
+
+```{r PTinfer, cache=FALSE}
+# P EPIDEMIC inferences
+# accessing the chains from estimate_virus_parameters
+# VIRUS PARAMETERS
+
+# convert from per min to per day
+al_fits=target[,,dimnames(target)$variable=="al[1]", drop = TRUE]*24
+be_fits=target[,,dimnames(target)$variable=="be[1]", drop = TRUE]*24
+mu_fits=target[,,dimnames(target)$variable=="mu[1]", drop = TRUE]*24
+print(sum((al_fits<0)))
+print(sum((be_fits<0)))
+print(sum((mu_fits<0)))
+
+# LOCAL PARAMETERS
+# set the local parameters (per day)
+thet_external <- 0.45 # dispersal
+r_external <- 1/28 # roguing
+bf_external <- 1/14 # vector mortality
+h_external <- 1/365 # harvesting rate
+nu_pl_external <- 1/14 # plant latent progression rate (1/plant latent period)
+localParams=c(thet_external, r_external, h_external, bf_external, nu_pl_external)
+
+# generate p Epdemic results for various insect burdens (per plant)
+interval_ind=(1/10) # this is an optional start setting relating to efficiency of time-step
+result_vec_byPl_PT <- array(rep(0, runsPrag*nChains), dim=c(runsPrag,nChains))
+result_vec_byIns_PT <- result_vec_byPl
+
+if (identical(Sys.getenv("NOT_CRAN"), "true")) {
+
+# loop through MCMC chains to sample posterior distributions of virus parameters
+# and calc epi prob for given vector abundance
+for (ggg in 1:nChains){
+ print(paste0('nChains',ggg))
+ for (ppp in 1:runsPrag) {
+
+  al_estim=al_fits[nrow(al_fits)+1-ppp,ggg]
+  be_estim=be_fits[nrow(al_fits)+1-ppp,ggg]
+  mu_estim=mu_fits[nrow(al_fits)+1-ppp,ggg]
+  virusParams=c(al_estim,be_estim,mu_estim)
+  
+  # returns vector of epidemic probabilities for different inoculum states (see ms)
+  numVars <- ((numInsects+1)*3)-1 # insects per plant number no. inoculum states
+  qm_out=calculate_epidemic_probability(numInsects,interval_ind,localParams,virusParams)
+  
+  result_vec_byPl_PT[ppp,ggg]=qm_out[1] # storing epi prob for state: inoculum=single infected plant
+  result_vec_byIns_PT[ppp,ggg]=qm_out[(numVars-(numInsects-1))] # storingfor state: single infected insect
+  
+ }
+}
+
+} else {
+  # Load precomputed object for CRAN
+  result_vec_byPl_PT <- readRDS(system.file("extdata", "result_vec_byPl_PT.rds", package = "EpiPvr"))
+  result_vec_byIns_PT <- readRDS(system.file("extdata", "result_vec_byIns_PT.rds", package = "EpiPvr"))
+}
+
+
+
+```
+
+
+
+```{r wrangleandout, cache=FALSE}
+
+# now run the epidemic probability calculator
+# runtime for a single parameter set is fast
+# runtime for a MCMC chains (potentially very many parameter sets) may take substantial time
+
+# data wrangling the set of epidemic probabilities from the chains
+data_table_Pl=array(rep(0,3), dim=c(3, 1))
+data_table_Ins=array(rep(0,3), dim=c(3, 1))
+target_A1A2=array(rep(0,2*runsPrag*nChains), dim=c(2,runsPrag*nChains))
+
+target_A1=array(rep(0,runsPrag*nChains), dim=c(runsPrag, nChains))
+target_A2=target_A1
+for (gg in 1:nChains){
+ target_A1[,gg]=t(result_vec_byPl_PT[,gg])
+ target_A2[,gg]=t(result_vec_byIns_PT[,gg])
+}
+target_A1A2=rbind(as.vector(target_A1),as.vector(target_A2))
+# ensure at least ~20 data points for each of 4 chains
+ts=posterior::summarize_draws(posterior::as_draws(t(target_A1A2))) 
+data_table_Pl=c(ts[1,]$median,ts[1,]$q5,ts[1,]$q95)
+data_table_Ins=c(ts[2,]$median,ts[2,]$q5,ts[2,]$q95)
+
+print(head(target_A1A2[1,]))
+print(head(target_A1A2[2,]))
+
+# nb default summarize_draws 90% interval - please adjust for 95%
+names(data_table_Pl)=c('50','5','95')
+print(data_table_Pl)
+names(data_table_Ins)=c('50','5','95')
+print(data_table_Ins)
+
+
+```
+
+
+
+
+
+
+
+
+

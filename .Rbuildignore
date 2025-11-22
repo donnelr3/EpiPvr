@@ -1,0 +1,10 @@
+^EpiPvr\.Rproj$
+^\.Rproj\.user$
+^vignettes/.*\.R$
+^vignettes/.*_cache/
+^vignettes/.*_files/
+^.*-manual\.pdf$
+^NEWS\.md\.md$
+^cran-comments\.md$
+^doc$
+^Meta$

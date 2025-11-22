@@ -1,0 +1,249 @@
+
+---
+title: "Using the EpiPvr package to create access period data"
+author: "R. Donnelly"
+date: "2025-09-24"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Using the EpiPvr package to create access period data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+  
+---
+
+```{r setup, include=FALSE}
+library(EpiPvr)
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(123)  # ensure reproducibility for CRAN checks
+```
+
+## R Markdown
+
+This vignette illustrates the use of the AP_assay_simulator.R function in the EpiPvr package. The function randomly simulates experimental access period data. Common access period experiments involve cohorts of insects that are provided access to an infected source plant for a set period (Tx), they are then moved to a healthy test plant for a set period (Tz), and it is then determined whether or not the test plant became infected. Simulating this outcome requires a user to specify an acquisition rate, an inoculation rate and a insect recovery rate. It also requires that Tx and Ty be defined as well as the number of insects in a cohort and the number of experimental replicates of the entire procedure. 
+
+In practice, results from these stochastic functions will vary between runs because of random sampling. We fix a seed (`set.seed(123)`) at the start of this vignette to ensure reproducibility for CRAN checks.
+
+The above is the simplest case and it applies to semi-persistently transmitted viruses (SPT). If a virus is instead persistently transmitted then there is also a latent progression rate to consider (ie the rate that a virus-exposed insect becomes infectious). In addition for PT viruses the cohort of insects will often be provided an intermediate access period on a healthy plant (Ty).
+
+Therefore in order to simulate experimental data we must pass the above assay structure to AP_assay_simulator.R. This is set out below first for PT viruses then for SPT viruses. 
+
+```{r sec1}
+# EXAMPLE OF PT VIRUS # EXAMPLE OF PT VIRUS # EXAMPLE OF PT VIRUS # EXAMPLE OF PT VIRUS 
+virusType="PT"
+# set assay structure
+nReps=30 # number of reps
+numWF=20 # number of insects in cohorts
+```
+
+
+
+```{r sec2}
+
+# virus/insect rates per hr
+alrate=0.1 # acquisition rate
+berate=1 # inoculation rate
+gamrate=0.5 # latency progression rate  (NA if SPT virus)
+murate=0.01 # virus clearance rate
+
+```
+
+
+
+Note that while subassays of the experiment follow the above description, in addition they involve performing groups of reps for variable durations of one of acquisition access, inoculation access, or latent access. Experiments will typically conduct all 3 sub-assays (acquisition varying-, latent period varying-, inoculation varying-, sub-assays). In what follows we define the variable durations for each sub-assay. 
+
+```{r sec3}
+AAP_lens=c(1,1.5,1.75,2,2.25,2.5,3,4); # variable duration vectors, hours AAP sub-assay
+LAP_lens=c(0.5,1,2,3,4,5,6,7,8);                                        # LAP sub-assay
+IAP_lens=c(5,10,15,20,25,30,40,50,60)/60;                               # IAP sub-assay
+
+AAP_Reps=rep(nReps,length(AAP_lens));  # vectors for number of replicates
+LAP_Reps=rep(nReps,length(LAP_lens));
+IAP_Reps=rep(nReps,length(IAP_lens));
+
+AAP_Infs_zeros=rep(0,length(AAP_lens));  # vectors for num infected test plants-initially 0
+LAP_Infs_zeros=rep(0,length(LAP_lens));
+IAP_Infs_zeros=rep(0,length(IAP_lens));
+
+AAPinput=rbind(AAP_lens, AAP_Reps, AAP_Infs_zeros)  # group structural vectors for input
+LAPinput=rbind(LAP_lens, LAP_Reps, LAP_Infs_zeros)
+IAPinput=rbind(IAP_lens, IAP_Reps, IAP_Infs_zeros)
+
+
+```
+
+While in sub-assays a particular part of the access sequence is varied, nevertheless in a given rep cohorts will follow the same sequence: access to infected source plant, access to intermediate healthy plant, access to healthy test plant. We must therefore also define the fixed periods (e.g. in the acquisition varying sub-assay the first period of the sequence is varied but the other two periods will be fixed). Note that we encode the index corresponding to the varied part with -1 so that this part is ignored.
+
+```{r sec4}
+
+# default durations of acquisition, latent and inoculation periods
+T_A=2
+T_L=0.5
+T_I=1
+
+# Place '-1' in the varied assay component
+AAPfixedComponent=c(-1,T_L,T_I)
+LAPfixedComponent=c(T_A,-1,T_I)
+IAPfixedComponent=c(T_A,T_L,-1)
+ddur_mat=rbind(AAPfixedComponent,LAPfixedComponent,IAPfixedComponent)
+
+
+```
+
+When we pass the required input structure the simulation populates the third row of the acquisition varying input sub-assay - that corresponding to the number of infected test plants. It does this by simulating the timing of events based on exponential distributions and the above declared rate parameters.
+
+
+```{r sec5}
+# simulate and hence populate the number of infected test plants in the AAP subassay
+assay1=AP_assay_simulator(AAPinput,
+                          AAPfixedComponent,
+                          numWF, c(alrate,berate,gamrate,murate),isVerbose=0,'PT')  
+# simulate and hence populate the number of infected test plants in the LAP subassay
+assay2=AP_assay_simulator(LAPinput,
+                          LAPfixedComponent,
+                          numWF, c(alrate,berate,gamrate,murate),isVerbose=0,'PT') 
+# simulate and hence populate the number of infected test plants in the IAP subassay
+assay3=AP_assay_simulator(IAPinput,
+                          IAPfixedComponent,
+                          numWF, c(alrate,berate,gamrate,murate),isVerbose=0,'PT') 
+
+
+```
+
+
+We combine the dataset elements together in a AP experimental dataset list. Users who wish to run the estimate_virus_parameters functions must ensure that their dataset corresponds to this format.
+
+```{r sec6}
+ap_data_sim=list(d_AAP=assay1,      # AAP sub-assay structure 
+                 d_LAP=assay2,      # LAP sub-assay structure  (OMIT IF SPT VIRUS) 
+                 d_IAP=assay3,      # IAP sub-assay structure 
+                 d_durations=ddur_mat,  # fixed durations
+                 d_vectorspp=numWF,     # insects in a cohort
+                 d_virusType=virusType) # virus code - element of {'SPT','PT'}
+
+
+```
+
+
+Finally the AP experimental dataset format includes attributes corresponding to virus rates. Note that users can input -1 when the rate is not known - as will be the case with empirical data.
+
+```{r sec7}
+# Adding virus parameters as attributes nb. -1 indicates unknown virus parameters
+attr(ap_data_sim, "alpha") <- alrate # acquisition rate
+attr(ap_data_sim, "beta") <- berate  # inocualation rate
+if (!is.na(gamrate)) {
+  attr(ap_data_sim, "gamma") <- gamrate  # latent progression rate(OMIT IF SPT VIRUS) 
+}
+attr(ap_data_sim, "mu") <- murate  # insect recovery rate rate
+
+print(ap_data_sim)
+
+```
+
+## Including Plots
+
+One can visualise the datasets that have been generated.
+
+```{r sec9, echo=FALSE}
+
+plot(ap_data_sim$d_AAP[1,],ap_data_sim$d_AAP[3,]/ap_data_sim$d_AAP[2,], xlab = "AAP duration, mins", ylab = "Prop. test plants PT infected",ylim=c(0,1))
+
+
+if (!is.null(ap_data_sim$d_LAP)) {
+  plot(ap_data_sim$d_LAP[1,],ap_data_sim$d_LAP[3,]/ap_data_sim$d_LAP[2,], xlab = "LAP duration, mins", ylab = "Prop. test plants PT infected",ylim=c(0,1))
+}
+
+plot(ap_data_sim$d_IAP[1,],ap_data_sim$d_IAP[3,]/ap_data_sim$d_IAP[2,], xlab = "IAP duration, mins", ylab = "Prop. test plants PT infected",ylim=c(0,1))
+
+```
+
+
+
+See below for an illustration of how to create the corresponding data for an SPT virus. Note there is no latent period varying sub-assay for SPT viruses, and since there is no significant latent period expected, the latent progression rate is set to NA. 
+
+
+
+```{r sec10}
+
+# EXAMPLE OF SPT VIRUS # EXAMPLE OF SPT VIRUS # EXAMPLE OF SPT VIRUS  
+
+virusType="SPT"
+nReps=30 # number of reps
+numWF=20 # number of insects in cohorts
+
+# virus rates per hr
+alrate=0.1 # acquisition rate
+berate=1 # inoculation rate
+gamrate=NA # latency progression rate
+murate=1 # virus clearance rate
+
+AAP_lens=c(2,3,3.5,4,4.5,5,6,8); # hours
+IAP_lens=c(5,10,15,20,25,30,40,50,60)/60; # hours
+
+AAP_Reps=rep(nReps,length(AAP_lens)); 
+IAP_Reps=rep(nReps,length(IAP_lens));
+
+AAP_Infs_zeros=rep(0,length(AAP_lens)); 
+IAP_Infs_zeros=rep(0,length(IAP_lens));
+
+AAPinput=rbind(AAP_lens, AAP_Reps, AAP_Infs_zeros)
+IAPinput=rbind(IAP_lens, IAP_Reps, IAP_Infs_zeros)
+
+# default durations of acquisition and inoculation periods 
+T_A=4
+T_I=6
+# Place '-1' in active assay component
+AAPfixedComponent=c(-1,0,T_I) # 0 hours for LAP fixed duration since SPT virus
+IAPfixedComponent=c(T_A,0,-1)
+
+
+
+assay1=AP_assay_simulator(AAPinput,
+                          AAPfixedComponent,
+                          numWF, c(alrate,berate,gamrate,murate),isVerbose=0,virusType)  
+assay3=AP_assay_simulator(IAPinput,
+                          IAPfixedComponent,
+                          numWF, c(alrate,berate,gamrate,murate),isVerbose=0,virusType) 
+
+# dataset format for SPT does not include LAP
+ddur_mat=rbind(AAPfixedComponent[c(1,3)],IAPfixedComponent[c(1,3)])
+
+ap_data_sim=list(d_AAP=assay1,
+                 d_IAP=assay3,
+                 d_durations=ddur_mat,
+                 d_vectorspp=numWF,
+                 d_virusType=virusType)
+
+```
+
+
+
+```{r sec11}
+# Adding virus parameters as attributes nb. -1 indicates unknown virus parameters
+# note that dataset format does not include gamma atttibute for SPT virus
+attr(ap_data_sim, "alpha") <- alrate 
+attr(ap_data_sim, "beta") <- berate 
+attr(ap_data_sim, "mu") <- murate 
+
+
+print(ap_data_sim)
+
+```
+
+
+## Including Plots
+
+Plotting the simulated dataset.
+
+```{r sec13, echo=FALSE}
+
+plot(ap_data_sim$d_AAP[1,],ap_data_sim$d_AAP[3,]/ap_data_sim$d_AAP[2,], xlab = "AAP duration, mins", ylab = "Prop. test plants PT infected",ylim=c(0,1))
+
+
+if (!is.null(ap_data_sim$d_LAP)) {
+  plot(ap_data_sim$d_LAP[1,],ap_data_sim$d_LAP[3,]/ap_data_sim$d_LAP[2,], xlab = "LAP duration, mins", ylab = "Prop. test plants PT infected",ylim=c(0,1))
+}
+
+plot(ap_data_sim$d_IAP[1,],ap_data_sim$d_IAP[3,]/ap_data_sim$d_IAP[2,], xlab = "IAP duration, mins", ylab = "Prop. test plants PT infected",ylim=c(0,1))
+
+```
+
